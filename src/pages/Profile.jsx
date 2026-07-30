@@ -15,6 +15,7 @@ import { GENDER_OPTIONS } from "../lib/gender";
 export default function Profile() {
   const { user, refreshProfile, logout } = useAuth();
   const navigate = useNavigate();
+  const hasPassword = Boolean(user?.hasPassword);
 
   const [profileForm, setProfileForm] = useState(null);
   const [profileError, setProfileError] = useState("");
@@ -78,11 +79,23 @@ export default function Profile() {
       setPwError("Passwords don't match.");
       return;
     }
+    if (hasPassword && !pwForm.currentPassword) {
+      setPwError("Please enter your current password.");
+      return;
+    }
 
     setSavingPw(true);
     try {
-      await userApi.changePassword(pwForm);
-      setPwSuccess("Password changed successfully.");
+      const payload = hasPassword
+        ? pwForm
+        : { password: pwForm.password, confirmPassword: pwForm.confirmPassword };
+      await userApi.changePassword(payload);
+      if (!hasPassword) refreshProfile({ ...user, hasPassword: true });
+      setPwSuccess(
+        hasPassword
+          ? "Password changed successfully."
+          : "Password set — you can now sign in with your email and this password too."
+      );
       setPwForm({ currentPassword: "", password: "", confirmPassword: "" });
     } catch (err) {
       setPwError(extractErrorMessage(err));
@@ -129,7 +142,7 @@ export default function Profile() {
         <span className="eyebrow">Your account</span>
         <h1 className="font-display text-4xl mt-3">{user?.firstName ? `Hello, ${user.firstName}` : "Profile"}</h1>
         <p className="text-stone mt-2">
-          {user?.email} · signed in via {user?.provider?.toLowerCase() || "email"}
+          {user?.email} · signs in via {describeSignInMethods(user)}
         </p>
       </div>
 
@@ -200,12 +213,18 @@ export default function Profile() {
         </form>
       </section>
 
-      {user?.provider === "LOCAL" && (
-        <section>
-          <h2 className="font-display text-2xl mb-6">Change password</h2>
-          <form onSubmit={handlePasswordSubmit} className="space-y-4 max-w-md">
-            <Notice type="error">{pwError}</Notice>
-            <Notice type="success">{pwSuccess}</Notice>
+      <section>
+        <h2 className="font-display text-2xl mb-2">{hasPassword ? "Change password" : "Set a password"}</h2>
+        {!hasPassword && (
+          <p className="text-sm text-stone mb-6 max-w-md">
+            Your account currently signs in via {user?.provider?.toLowerCase()}. Set a password here to
+            also be able to sign in with your email address directly.
+          </p>
+        )}
+        <form onSubmit={handlePasswordSubmit} className="space-y-4 max-w-md">
+          <Notice type="error">{pwError}</Notice>
+          <Notice type="success">{pwSuccess}</Notice>
+          {hasPassword && (
             <Field label="Current password">
               <PasswordInput
                 required
@@ -213,32 +232,32 @@ export default function Profile() {
                 onChange={(e) => setPwForm((f) => ({ ...f, currentPassword: e.target.value }))}
               />
             </Field>
-            <Field label="New password">
-              <PasswordInput
-                required
-                value={pwForm.password}
-                onChange={(e) => setPwForm((f) => ({ ...f, password: e.target.value }))}
-              />
-              <PasswordRequirements password={pwForm.password} />
-            </Field>
-            <Field label="Confirm new password">
-              <PasswordInput
-                required
-                value={pwForm.confirmPassword}
-                onChange={(e) => setPwForm((f) => ({ ...f, confirmPassword: e.target.value }))}
-              />
-              <PasswordMatchHint password={pwForm.password} confirmPassword={pwForm.confirmPassword} />
-            </Field>
-            <Button
-              type="submit"
-              loading={savingPw}
-              disabled={!passwordMeetsAllRules(pwForm.password) || pwForm.password !== pwForm.confirmPassword}
-            >
-              Update password
-            </Button>
-          </form>
-        </section>
-      )}
+          )}
+          <Field label={hasPassword ? "New password" : "Password"}>
+            <PasswordInput
+              required
+              value={pwForm.password}
+              onChange={(e) => setPwForm((f) => ({ ...f, password: e.target.value }))}
+            />
+            <PasswordRequirements password={pwForm.password} />
+          </Field>
+          <Field label={hasPassword ? "Confirm new password" : "Confirm password"}>
+            <PasswordInput
+              required
+              value={pwForm.confirmPassword}
+              onChange={(e) => setPwForm((f) => ({ ...f, confirmPassword: e.target.value }))}
+            />
+            <PasswordMatchHint password={pwForm.password} confirmPassword={pwForm.confirmPassword} />
+          </Field>
+          <Button
+            type="submit"
+            loading={savingPw}
+            disabled={!passwordMeetsAllRules(pwForm.password) || pwForm.password !== pwForm.confirmPassword}
+          >
+            {hasPassword ? "Update password" : "Set password"}
+          </Button>
+        </form>
+      </section>
 
       <section className="border border-clay/30 rounded-card p-6">
         <h2 className="font-display text-2xl mb-2 text-clay">Danger zone</h2>
@@ -261,4 +280,15 @@ export default function Profile() {
       </section>
     </div>
   );
+}
+
+function describeSignInMethods(user) {
+  if (!user) return "email";
+
+  const methods = [];
+  if (user.hasPassword) methods.push("email and password");
+  if (user.provider && user.provider !== "LOCAL") {
+    methods.push(user.provider.charAt(0) + user.provider.slice(1).toLowerCase());
+  }
+  return methods.length > 0 ? methods.join(" or ") : "email";
 }

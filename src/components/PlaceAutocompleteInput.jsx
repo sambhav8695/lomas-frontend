@@ -1,66 +1,130 @@
 import { useEffect, useRef, useState } from "react";
+import { MapPin } from "lucide-react";
 import { inputClass } from "./Field";
-import { loadGoogleMaps } from "../lib/googleMaps";
+import { fetchPlaceSuggestions, isGeoapifyConfigured } from "../lib/geoapify";
 
-/**
- * NOTE: this uses the classic `google.maps.places.Autocomplete` widget because it
- * attaches directly to a plain <input>, which is what lets it match our design system.
- * Google deprecated this widget for API keys created after March 2025 in favor of the
- * new <gmp-place-autocomplete> web component. If your key is new enough that this
- * widget is unavailable on it, the field falls back to a plain text input automatically
- * (see the `available` state below) — enable "Places API (Legacy)" for your key, or
- * swap this component to wrap <gmp-place-autocomplete> instead.
- */
+const DEBOUNCE_MS = 300;
+
 export default function PlaceAutocompleteInput({ value, onChange, placeholder, ...props }) {
-  const inputRef = useRef(null);
-  const autocompleteRef = useRef(null);
-  const [available, setAvailable] = useState(true);
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
+  const [loading, setLoading] = useState(false);
+
+  const debounceRef = useRef(null);
+  const abortRef = useRef(null);
+  const blurTimeoutRef = useRef(null);
+  const configured = isGeoapifyConfigured();
 
   useEffect(() => {
-    let cancelled = false;
-
-    loadGoogleMaps()
-      .then((google) => {
-        if (cancelled || !inputRef.current) return;
-        autocompleteRef.current = new google.maps.places.Autocomplete(inputRef.current, {
-          types: ["(cities)"],
-          fields: ["formatted_address", "name", "geometry"],
-        });
-        autocompleteRef.current.addListener("place_changed", () => {
-          const place = autocompleteRef.current.getPlace();
-          const description = place.formatted_address || place.name;
-          if (description) onChange(description);
-        });
-      })
-      .catch((err) => {
-        console.warn(err.message);
-        if (!cancelled) setAvailable(false);
-      });
-
     return () => {
-      cancelled = true;
-      if (autocompleteRef.current) {
-        window.google?.maps?.event.clearInstanceListeners(autocompleteRef.current);
-      }
+      clearTimeout(debounceRef.current);
+      clearTimeout(blurTimeoutRef.current);
+      abortRef.current?.abort();
     };
-  }, [onChange]);
+  }, []);
+
+  function handleChange(e) {
+    const nextValue = e.target.value;
+    onChange(nextValue);
+    setHighlighted(-1);
+
+    clearTimeout(debounceRef.current);
+    if (!configured || nextValue.trim().length < 2) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setLoading(true);
+      try {
+        const results = await fetchPlaceSuggestions(nextValue, { signal: controller.signal });
+        setSuggestions(results);
+        setOpen(results.length > 0);
+      } catch {
+        // A failed lookup just means no suggestions this keystroke — the field still works as plain text.
+      } finally {
+        setLoading(false);
+      }
+    }, DEBOUNCE_MS);
+  }
+
+  function selectSuggestion(suggestion) {
+    onChange(suggestion.label);
+    setSuggestions([]);
+    setOpen(false);
+    setHighlighted(-1);
+  }
+
+  function handleKeyDown(e) {
+    if (!open || suggestions.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlighted((i) => (i + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlighted((i) => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === "Enter" && highlighted >= 0) {
+      e.preventDefault();
+      selectSuggestion(suggestions[highlighted]);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  }
+
+  function handleBlur() {
+    // Delay closing so a click on a suggestion registers before the list unmounts.
+    blurTimeoutRef.current = setTimeout(() => setOpen(false), 150);
+  }
 
   return (
-    <div>
+    <div className="relative">
       <input
-        ref={inputRef}
         className={inputClass}
         placeholder={placeholder}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => suggestions.length > 0 && setOpen(true)}
+        onBlur={handleBlur}
         autoComplete="off"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
         {...props}
       />
-      {!available && (
+
+      {open && suggestions.length > 0 && (
+        <ul className="absolute z-20 mt-1.5 w-full max-h-64 overflow-y-auto rounded-xl border border-line bg-paper shadow-lg">
+          {suggestions.map((suggestion, index) => (
+            <li key={suggestion.id || suggestion.label}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => selectSuggestion(suggestion)}
+                className={`w-full flex items-start gap-2 text-left px-3.5 py-2.5 text-sm transition-colors ${
+                  index === highlighted ? "bg-gold-soft/50" : "hover:bg-cream-soft"
+                }`}
+              >
+                <MapPin size={14} className="mt-0.5 shrink-0 text-gold" />
+                <span>{suggestion.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!configured && import.meta.env.DEV && (
         <p className="text-xs text-stone-light mt-1.5">
-          Type your city and country — place suggestions are unavailable right now.
+          Place autocomplete disabled — set VITE_GEOAPIFY_API_KEY to enable it.
         </p>
       )}
+      {loading && <p className="text-xs text-stone-light mt-1.5">Searching…</p>}
     </div>
   );
 }

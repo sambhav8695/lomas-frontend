@@ -28,9 +28,10 @@ defaults. Change `server.port` in `vite.config.js` if you've changed those on th
 
 ### Optional integrations (`.env`)
 
-- `VITE_GOOGLE_PLACES_API_KEY` — enables autocomplete on birth-place fields (register, complete-birth-details,
-  profile). Get a key with the **Places API (Legacy)** enabled from the Google Cloud Console. Without it, the
-  field just falls back to a plain text input — nothing breaks.
+- `VITE_GEOAPIFY_API_KEY` — enables autocomplete on birth-place fields (register, complete-birth-details,
+  profile). Get a free key at https://myprojects.geoapify.com/. Without it, the field just falls back to a
+  plain text input — nothing breaks. Unlike Google Places, this is a plain REST call (no external script
+  injected, no Google-branded dropdown) — see `src/lib/geoapify.js` and `PlaceAutocompleteInput.jsx`.
 - `VITE_RECAPTCHA_SITE_KEY` — your Google reCAPTCHA v2 ("I'm not a robot") site key from
   https://www.google.com/recaptcha/admin. **Without it, the captcha step is skipped entirely** — no widget,
   no "for testing purposes only" banner. Set a real key here, and the matching `RECAPTCHA_SECRET_KEY` +
@@ -50,7 +51,12 @@ defaults. Change `server.port` in `vite.config.js` if you've changed those on th
   - Password fields have a show/hide toggle, a live requirements checklist (length, upper/lowercase,
     number, symbol — matching the backend's `@ValidPassword` rule), and a live "passwords match" hint
     wherever a password is set or changed (register, reset-password, change-password).
-  - Birth-place fields use Google Places autocomplete when `VITE_GOOGLE_PLACES_API_KEY` is set.
+  - Birth-place fields use Geoapify autocomplete when `VITE_GEOAPIFY_API_KEY` is set.
+  - Signing up with Google using an email that already has a local password account (or vice versa) links
+    to the same account rather than erroring or creating a duplicate — see the backend's own README for
+    how that linking works. The profile page shows "Set a password" instead of "Change password" for an
+    account that doesn't have one yet (i.e. signed up via Google only), so it's easy to add email/password
+    sign-in after the fact.
   - Register, login, forgot-password, and OTP-resend are all gated behind a reCAPTCHA checkbox when
     `VITE_RECAPTCHA_SITE_KEY` is configured, to cut down on spam signups / email floods.
   - Verifying your email now shows a success screen before redirecting to login, and login shows a
